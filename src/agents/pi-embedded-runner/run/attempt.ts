@@ -2608,6 +2608,13 @@ export async function runEmbeddedAttempt(
         sessionKey: sandboxSessionKey,
         sessionId: params.sessionId,
         agentId: sessionAgentId,
+        messagingFallbackContext:
+          params.currentChannelId || params.messageChannel || params.messageProvider
+            ? {
+                provider: params.messageChannel ?? params.messageProvider ?? undefined,
+                channelId: params.currentChannelId ?? undefined,
+              }
+            : undefined,
       });
 
       const {

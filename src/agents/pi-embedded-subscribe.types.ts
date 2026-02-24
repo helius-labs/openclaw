@@ -36,6 +36,8 @@ export type SubscribeEmbeddedPiSessionParams = {
   sessionId?: string;
   /** Agent identity for hook context — resolved from session config in attempt.ts. */
   agentId?: string;
+  /** Originating channel context for messaging tool dedup (provider + channel id). */
+  messagingFallbackContext?: { provider?: string; channelId?: string };
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";
