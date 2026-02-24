@@ -891,6 +891,13 @@ export async function runEmbeddedAttempt(
         enforceFinalTag: params.enforceFinalTag,
         config: params.config,
         sessionKey: params.sessionKey ?? params.sessionId,
+        messagingFallbackContext:
+          params.currentChannelId || params.messageChannel || params.messageProvider
+            ? {
+                provider: params.messageChannel ?? params.messageProvider ?? undefined,
+                channelId: params.currentChannelId ?? undefined,
+              }
+            : undefined,
       });
 
       const {

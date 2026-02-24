@@ -239,7 +239,11 @@ export async function handleToolExecutionStart(
     const argsRecord = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     const isMessagingSend = isMessagingToolSendAction(toolName, argsRecord);
     if (isMessagingSend) {
-      const sendTarget = extractMessagingToolSend(toolName, argsRecord);
+      const sendTarget = extractMessagingToolSend(
+        toolName,
+        argsRecord,
+        ctx.messagingFallbackContext,
+      );
       if (sendTarget) {
         ctx.state.pendingMessagingTargets.set(toolCallId, sendTarget);
       }

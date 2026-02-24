@@ -31,6 +31,8 @@ export type SubscribeEmbeddedPiSessionParams = {
   enforceFinalTag?: boolean;
   config?: OpenClawConfig;
   sessionKey?: string;
+  /** Originating channel context for messaging tool dedup (provider + channel id). */
+  messagingFallbackContext?: { provider?: string; channelId?: string };
 };
 
 export type { BlockReplyChunking } from "./pi-embedded-block-chunker.js";
