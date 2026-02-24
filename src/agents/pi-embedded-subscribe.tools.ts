@@ -303,6 +303,7 @@ export function extractToolErrorMessage(result: unknown): string | undefined {
 export function extractMessagingToolSend(
   toolName: string,
   args: Record<string, unknown>,
+  fallbackContext?: { provider?: string; channelId?: string },
 ): MessagingToolSend | undefined {
   // Provider docking: new provider tools must implement plugin.actions.extractToolSend.
   const action = typeof args.action === "string" ? args.action.trim() : "";
@@ -312,13 +313,23 @@ export function extractMessagingToolSend(
     if (action !== "send" && action !== "thread-reply") {
       return undefined;
     }
-    const toRaw = typeof args.to === "string" ? args.to : undefined;
-    if (!toRaw) {
-      return undefined;
-    }
+    const toRaw =
+      (typeof args.to === "string" ? args.to : undefined) ??
+      (typeof args.target === "string" ? args.target : undefined);
     const providerRaw = typeof args.provider === "string" ? args.provider.trim() : "";
     const channelRaw = typeof args.channel === "string" ? args.channel.trim() : "";
     const providerHint = providerRaw || channelRaw;
+    // When no explicit target, fall back to the session's originating channel
+    // so that sends routed by default are tracked for dedup.
+    if (!toRaw) {
+      if (fallbackContext?.channelId && fallbackContext?.provider) {
+        const fbProvider =
+          normalizeChannelId(fallbackContext.provider) ?? fallbackContext.provider.toLowerCase();
+        const fbTo = normalizeTargetForProvider(fbProvider, fallbackContext.channelId);
+        return fbTo ? { tool: toolName, provider: fbProvider, accountId, to: fbTo } : undefined;
+      }
+      return undefined;
+    }
     const providerId = providerHint ? normalizeChannelId(providerHint) : null;
     const provider = providerId ?? (providerHint ? providerHint.toLowerCase() : "message");
     const to = normalizeTargetForProvider(provider, toRaw);

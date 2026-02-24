@@ -626,6 +626,7 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     resetForCompactionRetry,
     finalizeAssistantTexts,
     trimMessagingToolSent,
+    messagingFallbackContext: params.messagingFallbackContext,
     ensureCompactionPromise,
     noteCompactionRetry,
     resolveCompactionRetry,

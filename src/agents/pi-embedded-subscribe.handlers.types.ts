@@ -115,6 +115,8 @@ export type EmbeddedPiSubscribeContext = {
     chunkerHasBuffered: boolean;
   }) => void;
   trimMessagingToolSent: () => void;
+  /** Originating channel context for messaging tool send dedup fallback. */
+  messagingFallbackContext?: { provider?: string; channelId?: string };
   ensureCompactionPromise: () => void;
   noteCompactionRetry: () => void;
   resolveCompactionRetry: () => void;
@@ -162,6 +164,8 @@ export type ToolHandlerContext = {
   emitToolSummary: (toolName?: string, meta?: string) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string) => void;
   trimMessagingToolSent: () => void;
+  /** Originating channel context for messaging tool send dedup fallback. */
+  messagingFallbackContext?: { provider?: string; channelId?: string };
 };
 
 export type EmbeddedPiSubscribeEvent =
