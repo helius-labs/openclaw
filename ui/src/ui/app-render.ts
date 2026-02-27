@@ -43,6 +43,11 @@ import {
 } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
+import {
+  loadObservability,
+  loadObsTranscript,
+  loadObsMemFile,
+} from "./controllers/observability.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { deleteSessionAndRefresh, loadSessions, patchSession } from "./controllers/sessions.ts";
 import {
@@ -65,6 +70,7 @@ import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.t
 import { renderInstances } from "./views/instances.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
+import { renderObservability } from "./views/observability.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSkills } from "./views/skills.ts";
@@ -791,6 +797,56 @@ export function renderApp(state: AppViewState) {
                       ? { kind: "node" as const, nodeId: state.execApprovalsTargetNodeId }
                       : { kind: "gateway" as const };
                   return saveExecApprovals(state, target);
+                },
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "observability"
+            ? renderObservability({
+                loading: state.obsLoading,
+                error: state.obsError,
+                sessions: state.obsSessions as import("./views/observability.ts").ObsSession[],
+                commands: state.obsCommands as import("./views/observability.ts").ObsCommand[],
+                memoryDirs: state.obsMemoryDirs as Record<
+                  string,
+                  import("./views/observability.ts").ObsMemoryFile[]
+                >,
+                memoryChanges:
+                  state.obsMemoryChanges as import("./views/observability.ts").ObsGitChange[],
+                selectedSession: state.obsSelectedSession,
+                transcript:
+                  state.obsTranscript as import("./views/observability.ts").ObsTranscriptEntry[],
+                transcriptLoading: state.obsTranscriptLoading,
+                selectedMemFile: state.obsSelectedMemFile,
+                memFileContent: state.obsMemFileContent,
+                expandedCmds: state.obsExpandedCmds,
+                onRefresh: () => loadObservability(state),
+                onSelectSession: (file) => {
+                  if (file) {
+                    void loadObsTranscript(state, file);
+                  } else {
+                    state.obsSelectedSession = null;
+                    state.obsTranscript = [];
+                  }
+                },
+                onSelectMemFile: (path) => {
+                  if (path) {
+                    void loadObsMemFile(state, path);
+                  } else {
+                    state.obsSelectedMemFile = null;
+                    state.obsMemFileContent = null;
+                  }
+                },
+                onToggleCmd: (key) => {
+                  const next = new Set(state.obsExpandedCmds);
+                  if (next.has(key)) {
+                    next.delete(key);
+                  } else {
+                    next.add(key);
+                  }
+                  state.obsExpandedCmds = next;
                 },
               })
             : nothing

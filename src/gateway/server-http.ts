@@ -54,6 +54,7 @@ import { getBearerToken } from "./http-utils.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import { GATEWAY_CLIENT_MODES, normalizeGatewayClientMode } from "./protocol/client-info.js";
+import { handleObservabilityRequest } from "./server-observability.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
 
@@ -606,6 +607,9 @@ export function createGatewayHttpServer(opts: {
         }
       }
       if (controlUiEnabled) {
+        if (handleObservabilityRequest(req, res)) {
+          return;
+        }
         if (
           handleControlUiAvatarRequest(req, res, {
             basePath: controlUiBasePath,
