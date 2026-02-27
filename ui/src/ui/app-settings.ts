@@ -4,6 +4,8 @@ import {
   stopLogsPolling,
   startDebugPolling,
   stopDebugPolling,
+  startObsPolling,
+  stopObsPolling,
 } from "./app-polling.ts";
 import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
 import type { OpenClawApp } from "./app.ts";
@@ -23,6 +25,7 @@ import { loadDevices } from "./controllers/devices.ts";
 import { loadExecApprovals } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
+import { loadObservability } from "./controllers/observability.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { loadSkills } from "./controllers/skills.ts";
@@ -165,6 +168,11 @@ export function setTab(host: SettingsHost, next: Tab) {
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   }
+  if (next === "observability") {
+    startObsPolling(host as unknown as Parameters<typeof startObsPolling>[0]);
+  } else {
+    stopObsPolling(host as unknown as Parameters<typeof stopObsPolling>[0]);
+  }
   void refreshActiveTab(host);
   syncUrlWithTab(host, next, false);
 }
@@ -250,6 +258,9 @@ export async function refreshActiveTab(host: SettingsHost) {
     host.logsAtBottom = true;
     await loadLogs(host as unknown as OpenClawApp, { reset: true });
     scheduleLogsScroll(host as unknown as Parameters<typeof scheduleLogsScroll>[0], true);
+  }
+  if (host.tab === "observability") {
+    await loadObservability(host as unknown as OpenClawApp);
   }
 }
 
@@ -364,6 +375,11 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
     startDebugPolling(host as unknown as Parameters<typeof startDebugPolling>[0]);
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
+  }
+  if (next === "observability") {
+    startObsPolling(host as unknown as Parameters<typeof startObsPolling>[0]);
+  } else {
+    stopObsPolling(host as unknown as Parameters<typeof stopObsPolling>[0]);
   }
   if (host.connected) {
     void refreshActiveTab(host);

@@ -160,6 +160,20 @@ export class OpenClawApp extends LitElement {
 
   @state() nodesLoading = false;
   @state() nodes: Array<Record<string, unknown>> = [];
+
+  // Observability
+  @state() obsLoading = false;
+  @state() obsError: string | null = null;
+  @state() obsSessions: Array<Record<string, unknown>> = [];
+  @state() obsCommands: Array<Record<string, unknown>> = [];
+  @state() obsMemoryDirs: Record<string, Array<Record<string, unknown>>> = {};
+  @state() obsMemoryChanges: Array<Record<string, unknown>> = [];
+  @state() obsSelectedSession: string | null = null;
+  @state() obsTranscript: Array<Record<string, unknown>> = [];
+  @state() obsTranscriptLoading = false;
+  @state() obsSelectedMemFile: string | null = null;
+  @state() obsMemFileContent: string | null = null;
+  @state() obsExpandedCmds: Set<string> = new Set();
   @state() devicesLoading = false;
   @state() devicesError: string | null = null;
   @state() devicesList: DevicePairingList | null = null;
@@ -378,6 +392,7 @@ export class OpenClawApp extends LitElement {
   private nodesPollInterval: number | null = null;
   private logsPollInterval: number | null = null;
   private debugPollInterval: number | null = null;
+  private obsPollInterval: number | null = null;
   private logsScrollFrame: number | null = null;
   private toolStreamById = new Map<string, ToolStreamEntry>();
   private toolStreamOrder: string[] = [];
