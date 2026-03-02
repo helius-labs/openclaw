@@ -16,6 +16,7 @@ type SessionRecord = {
   name: string;
   closed: boolean;
   lastUsedAt: string | null;
+  cwd: string | null;
 };
 
 /** Extended fields needed for orphan detection. */
@@ -28,6 +29,8 @@ type SessionRecordFull = SessionRecord & {
   createdAt: string | null;
   /** Agent command string — for informational logging. */
   agentCommand: string | null;
+  /** Working directory the session was created with. */
+  sessionCwd: string | null;
 };
 
 function parseSessionRecord(value: unknown): SessionRecord | null {
@@ -44,6 +47,7 @@ function parseSessionRecord(value: unknown): SessionRecord | null {
     id,
     name,
     closed: rec.closed === true,
+    cwd: typeof rec.cwd === "string" ? rec.cwd : null,
     lastUsedAt: typeof rec.lastUsedAt === "string" ? rec.lastUsedAt : null,
   };
 }
@@ -60,9 +64,10 @@ function parseSessionRecordFull(value: unknown): SessionRecordFull | null {
     typeof rec.agentCommand === "string" && rec.agentCommand.trim()
       ? rec.agentCommand.trim()
       : null;
+  const sessionCwd = typeof rec.cwd === "string" && rec.cwd.trim() ? rec.cwd.trim() : null;
   const createdAt =
     typeof rec.createdAt === "string" && rec.createdAt.trim() ? rec.createdAt.trim() : null;
-  return { ...base, agentPid, acpxSessionId, agentCommand, createdAt };
+  return { ...base, agentPid, acpxSessionId, agentCommand, createdAt, sessionCwd };
 }
 
 /** Check if a process is running by sending signal 0. */
@@ -252,7 +257,7 @@ export class SessionReaper {
         // Queue owner is dead (absent or stale lock file), agent is alive —
         // this is an orphaned process.
         const agent = deriveAgentFromSessionKey(name, FALLBACK_AGENT);
-        await this.closeSession(agent, name);
+        await this.closeSession(agent, name, record.sessionCwd ?? undefined);
         count += 1;
         this.opts.logger?.info?.(
           `acpx reaper: reaped orphaned agent pid=${agentPid} name=${name} agent=${agent} command="${record.agentCommand ?? "unknown"}"`,
@@ -301,7 +306,7 @@ export class SessionReaper {
         }
 
         const agent = deriveAgentFromSessionKey(record.name, FALLBACK_AGENT);
-        await this.closeSession(agent, record.name);
+        await this.closeSession(agent, record.name, record.cwd ?? undefined);
         closedCount += 1;
         this.opts.logger?.info?.(
           `acpx reaper: reaped session name=${record.name} agent=${agent} idle=${Math.round((now - lastUsedAt) / 1_000)}s`,
@@ -314,7 +319,11 @@ export class SessionReaper {
     return closedCount;
   }
 
-  private async closeSession(agent: string, sessionName: string): Promise<void> {
+  private async closeSession(
+    agent: string,
+    sessionName: string,
+    sessionCwd?: string,
+  ): Promise<void> {
     await spawnAndCollect({
       command: this.opts.command,
       args: [
@@ -322,13 +331,13 @@ export class SessionReaper {
         "json",
         "--json-strict",
         "--cwd",
-        this.opts.cwd,
+        sessionCwd || this.opts.cwd,
         agent,
         "sessions",
         "close",
         sessionName,
       ],
-      cwd: this.opts.cwd,
+      cwd: sessionCwd || this.opts.cwd,
     });
   }
 }
