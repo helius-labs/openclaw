@@ -161,6 +161,40 @@ describe("createAcpxRuntimeService", () => {
     );
   });
 
+  it("starts and stops the session reaper with the service lifecycle", async () => {
+    const { runtime } = createRuntimeStub(true);
+    const reaperStub = { start: vi.fn(), stop: vi.fn() };
+    const reaperFactory = vi.fn(() => reaperStub);
+    const service = createAcpxRuntimeService({
+      runtimeFactory: () => runtime,
+      reaperFactory,
+    });
+    const context = createServiceContext();
+
+    await service.start(context);
+    expect(reaperFactory).toHaveBeenCalledOnce();
+    expect(reaperStub.start).toHaveBeenCalledOnce();
+    expect(reaperStub.stop).not.toHaveBeenCalled();
+
+    await service.stop?.(context);
+    expect(reaperStub.stop).toHaveBeenCalledOnce();
+  });
+
+  it("passes reaperTtlSeconds from plugin config to the reaper factory", async () => {
+    const { runtime } = createRuntimeStub(true);
+    const reaperFactory = vi.fn(() => ({ start: vi.fn(), stop: vi.fn() }));
+    const service = createAcpxRuntimeService({
+      runtimeFactory: () => runtime,
+      reaperFactory,
+      pluginConfig: { reaperTtlSeconds: 120 },
+    });
+    const context = createServiceContext();
+
+    await service.start(context);
+
+    expect(reaperFactory).toHaveBeenCalledWith(expect.objectContaining({ ttlSeconds: 120 }));
+  });
+
   it("does not block startup while acpx ensure runs", async () => {
     const { runtime } = createRuntimeStub(true);
     ensureAcpxSpy.mockImplementation(() => new Promise<void>(() => {}));

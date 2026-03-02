@@ -85,6 +85,8 @@ export type AcpxPluginConfig = {
   timeoutSeconds?: number;
   queueOwnerTtlSeconds?: number;
   mcpServers?: Record<string, McpServerConfig>;
+  /** Idle TTL for the session reaper (seconds). Sessions not used for this long are forcibly closed. */
+  reaperTtlSeconds?: number;
 };
 
 export type ResolvedAcpxPluginConfig = {
@@ -100,12 +102,14 @@ export type ResolvedAcpxPluginConfig = {
   timeoutSeconds?: number;
   queueOwnerTtlSeconds: number;
   mcpServers: Record<string, McpServerConfig>;
+  reaperTtlSeconds: number;
 };
 
 const DEFAULT_PERMISSION_MODE: AcpxPermissionMode = "approve-reads";
 const DEFAULT_NON_INTERACTIVE_POLICY: AcpxNonInteractivePermissionPolicy = "fail";
 const DEFAULT_QUEUE_OWNER_TTL_SECONDS = 0.1;
 const DEFAULT_STRICT_WINDOWS_CMD_WRAPPER = true;
+const DEFAULT_REAPER_TTL_SECONDS = 300;
 
 type ParseResult =
   | { ok: true; value: AcpxPluginConfig | undefined }
@@ -172,6 +176,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
     "timeoutSeconds",
     "queueOwnerTtlSeconds",
     "mcpServers",
+    "reaperTtlSeconds",
   ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
@@ -256,6 +261,14 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
         };
       }
     }
+  const reaperTtlSeconds = value.reaperTtlSeconds;
+  if (
+    reaperTtlSeconds !== undefined &&
+    (typeof reaperTtlSeconds !== "number" ||
+      !Number.isFinite(reaperTtlSeconds) ||
+      reaperTtlSeconds <= 0)
+  ) {
+    return { ok: false, message: "reaperTtlSeconds must be a positive number" };
   }
 
   return {
@@ -273,6 +286,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
       queueOwnerTtlSeconds:
         typeof queueOwnerTtlSeconds === "number" ? queueOwnerTtlSeconds : undefined,
       mcpServers: mcpServers as Record<string, McpServerConfig> | undefined,
+      reaperTtlSeconds: typeof reaperTtlSeconds === "number" ? reaperTtlSeconds : undefined,
     },
   };
 }
@@ -344,6 +358,7 @@ export function createAcpxPluginConfigSchema(): OpenClawPluginConfigSchema {
             required: ["command"],
           },
         },
+        reaperTtlSeconds: { type: "number", minimum: 0.001 },
       },
     },
   };
@@ -400,5 +415,6 @@ export function resolveAcpxPluginConfig(params: {
     timeoutSeconds: normalized.timeoutSeconds,
     queueOwnerTtlSeconds: normalized.queueOwnerTtlSeconds ?? DEFAULT_QUEUE_OWNER_TTL_SECONDS,
     mcpServers: normalized.mcpServers ?? {},
+    reaperTtlSeconds: normalized.reaperTtlSeconds ?? DEFAULT_REAPER_TTL_SECONDS,
   };
 }
