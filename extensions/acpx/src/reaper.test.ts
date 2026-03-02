@@ -411,6 +411,7 @@ describe("SessionReaper", () => {
         lastUsedAt: new Date().toISOString(), // recent — TTL would NOT fire
         pid: agentPid,
         agentCommand: "npx fake-codex-acp",
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
       });
 
       const reaper = new SessionReaper({
@@ -536,6 +537,7 @@ describe("SessionReaper", () => {
         sessionId,
         lastUsedAt: new Date().toISOString(), // just now — long TTL would never expire
         pid: agentPid,
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
       });
 
       const reaper = new SessionReaper({
@@ -578,6 +580,7 @@ describe("SessionReaper", () => {
         lastUsedAt: new Date().toISOString(),
         pid: agentPid,
         agentCommand: "npx fake-codex-acp",
+        createdAt: new Date(Date.now() - 60_000).toISOString(),
       });
 
       const reaper = new SessionReaper({

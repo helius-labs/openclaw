@@ -7,6 +7,8 @@ import { spawnAndCollect } from "./runtime-internals/process.js";
 import { asTrimmedString, deriveAgentFromSessionKey } from "./runtime-internals/shared.js";
 
 const DEFAULT_CHECK_INTERVAL_MS = 60_000;
+/** Grace period (ms) after session creation before orphan detection kicks in. */
+const ORPHAN_GRACE_PERIOD_MS = 10_000;
 const FALLBACK_AGENT = "codex";
 
 type SessionRecord = {
@@ -22,6 +24,8 @@ type SessionRecordFull = SessionRecord & {
   agentPid: number | null;
   /** ACP session ID (the 'sessionId' field in the JSON file). Used to locate the queue owner lock. */
   acpxSessionId: string | null;
+  /** Session creation time — used for startup grace period in orphan detection. */
+  createdAt: string | null;
   /** Agent command string — for informational logging. */
   agentCommand: string | null;
 };
@@ -56,7 +60,9 @@ function parseSessionRecordFull(value: unknown): SessionRecordFull | null {
     typeof rec.agentCommand === "string" && rec.agentCommand.trim()
       ? rec.agentCommand.trim()
       : null;
-  return { ...base, agentPid, acpxSessionId, agentCommand };
+  const createdAt =
+    typeof rec.createdAt === "string" && rec.createdAt.trim() ? rec.createdAt.trim() : null;
+  return { ...base, agentPid, acpxSessionId, agentCommand, createdAt };
 }
 
 /** Check if a process is running by sending signal 0. */
@@ -64,7 +70,9 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (err) {
+    // EPERM means the process exists but we lack permission to signal it.
+    if ((err as NodeJS.ErrnoException).code === "EPERM") return true;
     return false;
   }
 }
@@ -130,6 +138,7 @@ export type SessionReaperOptions = {
  */
 export class SessionReaper {
   private timer: NodeJS.Timeout | null = null;
+  private reaping = false;
   private readonly checkIntervalMs: number;
   private readonly sessionsDir: string;
   private readonly queuesDir: string;
@@ -171,10 +180,16 @@ export class SessionReaper {
    *   2. TTL pass: close sessions that have been idle longer than ttlSeconds.
    */
   async reap(): Promise<number> {
-    let total = 0;
-    total += await this.reapOrphanedAgents();
-    total += await this.reapIdleSessions();
-    return total;
+    if (this.reaping) return 0;
+    this.reaping = true;
+    try {
+      let total = 0;
+      total += await this.reapOrphanedAgents();
+      total += await this.reapIdleSessions();
+      return total;
+    } finally {
+      this.reaping = false;
+    }
   }
 
   /**
@@ -212,12 +227,17 @@ export class SessionReaper {
         }
 
         const { agentPid, acpxSessionId, name } = record;
-
         // Need both the agent PID and the ACP session ID to perform orphan detection.
         if (!agentPid || !acpxSessionId) {
           continue;
         }
 
+        // Skip sessions created very recently — the queue owner lock file
+        // may not have been written yet (startup race window).
+        if (record.createdAt) {
+          const age = Date.now() - new Date(record.createdAt).getTime();
+          if (age < ORPHAN_GRACE_PERIOD_MS) continue;
+        }
         // Skip if the agent process is no longer running.
         if (!isProcessAlive(agentPid)) {
           continue;
@@ -275,7 +295,7 @@ export class SessionReaper {
           continue;
         }
 
-        const lastUsedAt = record.lastUsedAt ? new Date(record.lastUsedAt).getTime() : 0;
+        const lastUsedAt = record.lastUsedAt ? new Date(record.lastUsedAt).getTime() : NaN;
         if (Number.isNaN(lastUsedAt) || now - lastUsedAt < ttlMs) {
           continue;
         }
