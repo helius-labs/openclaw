@@ -16,6 +16,7 @@ type SessionRecord = {
   name: string;
   closed: boolean;
   lastUsedAt: string | null;
+  sessionId: string | null;
   cwd: string | null;
 };
 
@@ -48,6 +49,7 @@ function parseSessionRecord(value: unknown): SessionRecord | null {
     name,
     closed: rec.closed === true,
     cwd: typeof rec.cwd === "string" ? rec.cwd : null,
+    sessionId: typeof rec.sessionId === "string" ? rec.sessionId : null,
     lastUsedAt: typeof rec.lastUsedAt === "string" ? rec.lastUsedAt : null,
   };
 }
@@ -305,6 +307,14 @@ export class SessionReaper {
           continue;
         }
 
+        // Skip sessions with an active queue-owner — the agent is processing a turn
+        // even though lastUsedAt hasn't been updated yet.
+        if (record.sessionId) {
+          const queueAlive = await isQueueOwnerAlive(this.queuesDir, record.sessionId);
+          if (queueAlive) {
+            continue;
+          }
+        }
         const agent = deriveAgentFromSessionKey(record.name, FALLBACK_AGENT);
         await this.closeSession(agent, record.name, record.cwd ?? undefined);
         closedCount += 1;
