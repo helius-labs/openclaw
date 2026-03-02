@@ -11,6 +11,7 @@ import {
   type ResolvedAcpxPluginConfig,
 } from "./config.js";
 import { ensurePinnedAcpx } from "./ensure.js";
+import { SessionReaper, type SessionReaperOptions } from "./reaper.js";
 import { ACPX_BACKEND_ID, AcpxRuntime } from "./runtime.js";
 
 type AcpxRuntimeLike = AcpRuntime & {
@@ -24,9 +25,17 @@ type AcpxRuntimeFactoryParams = {
   logger?: PluginLogger;
 };
 
+type SessionReaperLike = {
+  start(): void;
+  stop(): void;
+};
+
+type SessionReaperFactoryParams = SessionReaperOptions;
+
 type CreateAcpxRuntimeServiceParams = {
   pluginConfig?: unknown;
   runtimeFactory?: (params: AcpxRuntimeFactoryParams) => AcpxRuntimeLike;
+  reaperFactory?: (params: SessionReaperFactoryParams) => SessionReaperLike;
 };
 
 function createDefaultRuntime(params: AcpxRuntimeFactoryParams): AcpxRuntimeLike {
@@ -36,10 +45,15 @@ function createDefaultRuntime(params: AcpxRuntimeFactoryParams): AcpxRuntimeLike
   });
 }
 
+function createDefaultReaper(params: SessionReaperFactoryParams): SessionReaperLike {
+  return new SessionReaper(params);
+}
+
 export function createAcpxRuntimeService(
   params: CreateAcpxRuntimeServiceParams = {},
 ): OpenClawPluginService {
   let runtime: AcpxRuntimeLike | null = null;
+  let reaper: SessionReaperLike | null = null;
   let lifecycleRevision = 0;
 
   return {
@@ -55,6 +69,15 @@ export function createAcpxRuntimeService(
         queueOwnerTtlSeconds: pluginConfig.queueOwnerTtlSeconds,
         logger: ctx.logger,
       });
+
+      const reaperFactory = params.reaperFactory ?? createDefaultReaper;
+      reaper = reaperFactory({
+        command: pluginConfig.command,
+        cwd: pluginConfig.cwd,
+        ttlSeconds: pluginConfig.reaperTtlSeconds,
+        logger: ctx.logger,
+      });
+      reaper.start();
 
       registerAcpRuntimeBackend({
         id: ACPX_BACKEND_ID,
@@ -95,6 +118,8 @@ export function createAcpxRuntimeService(
     },
     async stop(_ctx: OpenClawPluginServiceContext): Promise<void> {
       lifecycleRevision += 1;
+      reaper?.stop();
+      reaper = null;
       unregisterAcpRuntimeBackend(ACPX_BACKEND_ID);
       runtime = null;
     },
