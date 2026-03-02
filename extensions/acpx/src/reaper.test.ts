@@ -291,6 +291,66 @@ describe("SessionReaper", () => {
       expect(closeEntry?.agent).toBe("codex");
     });
 
+    it("skips stale sessions when queue-owner is still alive (active turn)", async () => {
+      const { scriptPath, logPath, sessionsDir, queuesDir, cwd } = await createMockEnv();
+
+      // Session created 10 minutes ago, lastUsedAt 10 minutes ago — well past TTL.
+      // But the queue-owner lock is alive, meaning the agent is actively processing.
+      const staleTime = new Date(Date.now() - 600_000).toISOString();
+      const sessionId = "active-turn-session-id";
+      await writeSession(sessionsDir, "agent:claude:acp:active-turn", {
+        lastUsedAt: staleTime,
+        sessionId,
+      });
+
+      // Write a queue-owner lock with the current process PID (guaranteed alive).
+      await writeQueueLock(queuesDir, sessionId, process.pid);
+
+      const reaper = new SessionReaper({
+        command: scriptPath,
+        cwd,
+        ttlSeconds: 60,
+        sessionsDir,
+        queuesDir,
+      });
+
+      const count = await reaper.reap();
+      expect(count).toBe(0);
+
+      const logs = await readLogEntries(logPath);
+      const closedNames = logs.filter((e) => e.kind === "close").map((e) => e.sessionName);
+      expect(closedNames).not.toContain("agent:claude:acp:active-turn");
+    });
+
+    it("reaps stale sessions when queue-owner is dead", async () => {
+      const { scriptPath, logPath, sessionsDir, queuesDir, cwd } = await createMockEnv();
+
+      const staleTime = new Date(Date.now() - 600_000).toISOString();
+      const sessionId = "dead-owner-session-id";
+      await writeSession(sessionsDir, "agent:claude:acp:dead-owner", {
+        lastUsedAt: staleTime,
+        sessionId,
+      });
+
+      // Write a queue-owner lock with a dead PID.
+      await writeQueueLock(queuesDir, sessionId, 99999);
+
+      const reaper = new SessionReaper({
+        command: scriptPath,
+        cwd,
+        ttlSeconds: 60,
+        sessionsDir,
+        queuesDir,
+      });
+
+      const count = await reaper.reap();
+      expect(count).toBe(1);
+
+      const logs = await readLogEntries(logPath);
+      const closedNames = logs.filter((e) => e.kind === "close").map((e) => e.sessionName);
+      expect(closedNames).toContain("agent:claude:acp:dead-owner");
+    });
+
     it("skips stream ndjson sidecar files", async () => {
       const { scriptPath, logPath, sessionsDir, queuesDir, cwd } = await createMockEnv();
 
