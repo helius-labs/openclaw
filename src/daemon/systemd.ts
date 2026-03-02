@@ -191,6 +191,19 @@ export async function installSystemdService({
 }: GatewayServiceInstallArgs): Promise<{ unitPath: string }> {
   await assertSystemdAvailable();
 
+  // Guard: skip user-level unit creation when a system-level unit already manages the gateway.
+  // This prevents the recurring crash-loop where both units try to bind the same port.
+  const systemUnitPath = "/etc/systemd/system/openclaw.service";
+  try {
+    await fs.access(systemUnitPath);
+    stdout.write(
+      `${formatLine("Skipped", `system-level unit exists at ${systemUnitPath}; user-level install not needed`)}\n`,
+    );
+    return { unitPath: resolveSystemdUnitPath(env) };
+  } catch {
+    // No system-level unit — proceed with normal user-level install.
+  }
+
   const unitPath = resolveSystemdUnitPath(env);
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
 
