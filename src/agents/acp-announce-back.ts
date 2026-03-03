@@ -3,52 +3,17 @@ import { normalizeDeliveryContext, type DeliveryContext } from "../utils/deliver
 import { INTERNAL_MESSAGE_CHANNEL, isDeliverableMessageChannel } from "../utils/message-channel.js";
 import { buildAnnounceIdempotencyKey } from "./announce-idempotency.js";
 import { AGENT_LANE_NESTED } from "./lanes.js";
-import { readLatestAssistantReply } from "./tools/agent-step.js";
 
 const ACP_RUN_ANNOUNCE_BACK_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
 const ACP_RUN_ANNOUNCE_BACK_WAIT_SLICE_MS = 20_000;
-const ACP_RUN_ANNOUNCE_BACK_OUTPUT_RETRY_MS = 8_000;
-const ACP_RUN_ANNOUNCE_BACK_OUTPUT_POLL_MS = 250;
 const ACP_RUN_ANNOUNCE_BACK_MAX_MESSAGE_CHARS = 24_000;
 
 type AcpAnnounceOutcome =
-  | { status: "ok" }
-  | { status: "error"; error?: string }
+  | { status: "ok"; outputText?: string }
+  | { status: "error"; error?: string; outputText?: string }
   | { status: "timeout" };
 
 const ACTIVE_RUN_ANNOUNCE_BACK = new Set<string>();
-
-/**
- * In-memory store for ACP session output.
- * dispatch-acp.ts writes here; announce-back reads from here.
- * Keyed by session key.
- */
-function getAcpOutputStore(): Map<string, string> {
-  const g = globalThis as unknown as { __acpSessionOutput?: Map<string, string> };
-  if (!g.__acpSessionOutput) {
-    g.__acpSessionOutput = new Map<string, string>();
-  }
-  return g.__acpSessionOutput;
-}
-
-export function storeAcpSessionOutput(sessionKey: string, text: string): void {
-  getAcpOutputStore().set(sessionKey, text);
-}
-
-export function readAcpSessionOutput(sessionKey: string): string | undefined {
-  return getAcpOutputStore().get(sessionKey);
-}
-
-export function clearAcpSessionOutput(sessionKey: string): void {
-  getAcpOutputStore().delete(sessionKey);
-}
-
-function _normalizeText(value: unknown): string {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  return "";
-}
 
 function truncateMessage(text: string, maxChars: number): string {
   if (text.length <= maxChars) {
@@ -67,7 +32,7 @@ function buildCompletionMessage(params: {
   childSessionKey: string;
   elapsedMs: number;
 }): string {
-  const { outcome, output, task, label: _label, childSessionKey: _childSessionKey } = params;
+  const { outcome, output, task } = params;
   const statusIcon =
     outcome.status === "ok" ? "\u2705" : outcome.status === "timeout" ? "\u23f0" : "\u274c";
   const header = `${statusIcon} ACP finished`;
@@ -82,6 +47,11 @@ function buildCompletionMessage(params: {
   return `${header}\n\n(no output)`;
 }
 
+/**
+ * Wait for an ACP run to complete via agent.wait.
+ * agent.wait now returns outputText alongside status, so we get the
+ * output directly from the agent-job event cache — no side-channel needed.
+ */
 async function waitForRunCompletion(params: {
   runId: string;
   timeoutMs: number;
@@ -96,61 +66,26 @@ async function waitForRunCompletion(params: {
       break;
     }
     try {
-      const result = await callGateway<{ status?: string }>({
+      const result = await callGateway<{
+        status?: string;
+        error?: string;
+        outputText?: string;
+      }>({
         method: "agent.wait",
         params: { runId: params.runId, timeoutMs: sliceMs },
         timeoutMs: sliceMs + 5_000,
       });
       if (result?.status === "ok") {
-        return { status: "ok" };
+        return { status: "ok", outputText: result.outputText };
+      }
+      if (result?.status === "error") {
+        return { status: "error", error: result.error, outputText: result.outputText };
       }
     } catch {
       // Continue polling
     }
   }
   return { status: "timeout" };
-}
-
-async function readOutput(params: {
-  sessionKey: string;
-  maxWaitMs: number;
-}): Promise<string | undefined> {
-  const startedAt = Date.now();
-
-  // First try the in-memory store (written by dispatch-acp.ts)
-  const stored = readAcpSessionOutput(params.sessionKey);
-  if (stored?.trim()) {
-    clearAcpSessionOutput(params.sessionKey);
-    return stored;
-  }
-
-  // Fall back to chat history (may work for some session types)
-  let last = await readLatestAssistantReply({ sessionKey: params.sessionKey, limit: 120 });
-  if (last?.trim()) {
-    return last;
-  }
-
-  // Retry loop
-  for (;;) {
-    const elapsed = Date.now() - startedAt;
-    if (elapsed >= params.maxWaitMs) {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, ACP_RUN_ANNOUNCE_BACK_OUTPUT_POLL_MS));
-
-    // Check in-memory store again
-    const storedRetry = readAcpSessionOutput(params.sessionKey);
-    if (storedRetry?.trim()) {
-      clearAcpSessionOutput(params.sessionKey);
-      return storedRetry;
-    }
-
-    last = await readLatestAssistantReply({ sessionKey: params.sessionKey, limit: 120 });
-    if (last?.trim()) {
-      return last;
-    }
-  }
-  return undefined;
 }
 
 interface AcpRunAnnounceRegistration {
@@ -173,7 +108,6 @@ export function registerAcpRunAnnounceBack(params: AcpRunAnnounceRegistration): 
     .catch(() => {})
     .finally(() => {
       ACTIVE_RUN_ANNOUNCE_BACK.delete(key);
-      clearAcpSessionOutput(key);
     });
 }
 
@@ -184,15 +118,16 @@ async function runAnnounceBack(params: AcpRunAnnounceRegistration): Promise<void
     timeoutMs: ACP_RUN_ANNOUNCE_BACK_TIMEOUT_MS,
   });
 
-  const output = await readOutput({
-    sessionKey: params.childSessionKey,
-    maxWaitMs: ACP_RUN_ANNOUNCE_BACK_OUTPUT_RETRY_MS,
-  });
+  // Output comes directly from agent.wait (via the agent-job event cache)
+  const rawOutput =
+    outcome.status !== "timeout" ? outcome.outputText?.trim() || undefined : undefined;
 
   const elapsedMs = Date.now() - startedAt;
   const message = buildCompletionMessage({
     outcome,
-    output: output ? truncateMessage(output, ACP_RUN_ANNOUNCE_BACK_MAX_MESSAGE_CHARS) : undefined,
+    output: rawOutput
+      ? truncateMessage(rawOutput, ACP_RUN_ANNOUNCE_BACK_MAX_MESSAGE_CHARS)
+      : undefined,
     task: params.task,
     label: params.label,
     childSessionKey: params.childSessionKey,
