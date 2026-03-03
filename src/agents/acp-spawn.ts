@@ -22,6 +22,12 @@ import {
 } from "../channels/thread-bindings-policy.js";
 import { loadConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/config.js";
+import {
+  loadSessionStore,
+  resolveAgentIdFromSessionKey,
+  resolveMainSessionKey,
+  resolveStorePath,
+} from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { resolveConversationIdFromTargets } from "../infra/outbound/conversation-id.js";
 import {
@@ -29,8 +35,13 @@ import {
   isSessionBindingError,
   type SessionBindingRecord,
 } from "../infra/outbound/session-binding-service.js";
-import { normalizeAgentId } from "../routing/session-key.js";
-import { normalizeDeliveryContext } from "../utils/delivery-context.js";
+import { normalizeAgentId, normalizeMainKey } from "../routing/session-key.js";
+import {
+  deliveryContextFromSession,
+  mergeDeliveryContext,
+  normalizeDeliveryContext,
+} from "../utils/delivery-context.js";
+import { registerAcpRunAnnounceBack } from "./acp-announce-back.js";
 
 export const ACP_SPAWN_MODES = ["run", "session"] as const;
 export type SpawnAcpMode = (typeof ACP_SPAWN_MODES)[number];
@@ -71,6 +82,48 @@ type PreparedAcpThreadBinding = {
   accountId: string;
   conversationId: string;
 };
+
+function resolveRequesterStoreKey(
+  cfg: ReturnType<typeof loadConfig>,
+  requesterSessionKey: string,
+): string {
+  const raw = (requesterSessionKey ?? "").trim();
+  if (!raw) {
+    return raw;
+  }
+  if (raw === "global" || raw === "unknown") {
+    return raw;
+  }
+  if (raw.startsWith("agent:")) {
+    return raw;
+  }
+  const mainKey = normalizeMainKey(cfg.session?.mainKey);
+  if (raw === "main" || raw === mainKey) {
+    return resolveMainSessionKey(cfg);
+  }
+  const agentId = resolveAgentIdFromSessionKey(raw);
+  return `agent:${agentId}:${raw}`;
+}
+
+function resolveRequesterOriginFromSession(
+  cfg: ReturnType<typeof loadConfig>,
+  requesterSessionKey: string | undefined,
+  requesterOrigin: ReturnType<typeof normalizeDeliveryContext>,
+) {
+  const key = requesterSessionKey?.trim();
+  if (!key) {
+    return undefined;
+  }
+  if (requesterOrigin?.channel && requesterOrigin?.to && requesterOrigin?.accountId) {
+    return undefined;
+  }
+  const canonicalKey = resolveRequesterStoreKey(cfg, key);
+  const agentId = resolveAgentIdFromSessionKey(canonicalKey);
+  const storePath = resolveStorePath(cfg.session?.store, { agentId });
+  const store = loadSessionStore(storePath);
+  const entry = store[canonicalKey];
+  return deliveryContextFromSession(entry);
+}
 
 function resolveSpawnMode(params: {
   requestedMode?: SpawnAcpMode;
@@ -262,14 +315,25 @@ export async function spawnAcpDirect(
   const sessionKey = `agent:${targetAgentId}:acp:${crypto.randomUUID()}`;
   const runtimeMode = resolveAcpSessionMode(spawnMode);
 
+  const requesterOriginCandidate = normalizeDeliveryContext({
+    channel: ctx.agentChannel,
+    accountId: ctx.agentAccountId,
+    to: ctx.agentTo,
+    threadId: ctx.agentThreadId,
+  });
+  const requesterOrigin = mergeDeliveryContext(
+    requesterOriginCandidate,
+    resolveRequesterOriginFromSession(cfg, ctx.agentSessionKey, requesterOriginCandidate),
+  );
+
   let preparedBinding: PreparedAcpThreadBinding | null = null;
   if (requestThreadBinding) {
     const prepared = prepareAcpThreadBinding({
       cfg,
-      channel: ctx.agentChannel,
-      accountId: ctx.agentAccountId,
-      to: ctx.agentTo,
-      threadId: ctx.agentThreadId,
+      channel: requesterOrigin?.channel,
+      accountId: requesterOrigin?.accountId,
+      to: requesterOrigin?.to,
+      threadId: requesterOrigin?.threadId,
     });
     if (!prepared.ok) {
       return {
@@ -362,12 +426,6 @@ export async function spawnAcpDirect(
     };
   }
 
-  const requesterOrigin = normalizeDeliveryContext({
-    channel: ctx.agentChannel,
-    accountId: ctx.agentAccountId,
-    to: ctx.agentTo,
-    threadId: ctx.agentThreadId,
-  });
   // For thread-bound ACP spawns, force bootstrap delivery to the new child thread.
   const boundThreadIdRaw = binding?.conversation.conversationId;
   const boundThreadId = boundThreadIdRaw ? String(boundThreadIdRaw).trim() || undefined : undefined;
@@ -412,6 +470,17 @@ export async function spawnAcpDirect(
       error: summarizeError(err),
       childSessionKey: sessionKey,
     };
+  }
+
+  if (spawnMode === "run" && ctx.agentSessionKey) {
+    registerAcpRunAnnounceBack({
+      runId: childRunId,
+      childSessionKey: sessionKey,
+      requesterSessionKey: ctx.agentSessionKey,
+      requesterOrigin,
+      task: params.task,
+      label: params.label,
+    });
   }
 
   return {
