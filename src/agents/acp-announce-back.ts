@@ -23,18 +23,24 @@ const ACTIVE_RUN_ANNOUNCE_BACK = new Set<string>();
  * dispatch-acp.ts writes here; announce-back reads from here.
  * Keyed by session key.
  */
-const ACP_SESSION_OUTPUT = new Map<string, string>();
+function getAcpOutputStore(): Map<string, string> {
+  const g = globalThis as unknown as { __acpSessionOutput?: Map<string, string> };
+  if (!g.__acpSessionOutput) {
+    g.__acpSessionOutput = new Map<string, string>();
+  }
+  return g.__acpSessionOutput;
+}
 
 export function storeAcpSessionOutput(sessionKey: string, text: string): void {
-  ACP_SESSION_OUTPUT.set(sessionKey, text);
+  getAcpOutputStore().set(sessionKey, text);
 }
 
 export function readAcpSessionOutput(sessionKey: string): string | undefined {
-  return ACP_SESSION_OUTPUT.get(sessionKey);
+  return getAcpOutputStore().get(sessionKey);
 }
 
 export function clearAcpSessionOutput(sessionKey: string): void {
-  ACP_SESSION_OUTPUT.delete(sessionKey);
+  getAcpOutputStore().delete(sessionKey);
 }
 
 function _normalizeText(value: unknown): string {
