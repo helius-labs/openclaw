@@ -8,7 +8,6 @@ import {
   resolveSessionIdentityFromMeta,
 } from "../../acp/runtime/session-identity.js";
 import { readAcpSessionEntry } from "../../acp/runtime/session-meta.js";
-import { storeAcpSessionOutput } from "../../agents/acp-announce-back.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
 import { logVerbose } from "../../globals.js";
@@ -182,17 +181,12 @@ export async function tryDispatchAcpReply(params: {
   };
   let queuedFinal = false;
   let acpAccumulatedBlockText = "";
-  let allDispatchedText = "";
   let acpBlockCount = 0;
   const deliverAcpPayload = async (
     kind: ReplyDispatchKind,
     payload: ReplyPayload,
   ): Promise<boolean> => {
     if (payload.text?.trim()) {
-      if (allDispatchedText.length > 0) {
-        allDispatchedText += "\n";
-      }
-      allDispatchedText += payload.text;
     }
     if (kind === "block" && payload.text?.trim()) {
       if (acpAccumulatedBlockText.length > 0) {
@@ -355,9 +349,6 @@ export async function tryDispatchAcpReply(params: {
     logVerbose(
       `acp-dispatch: session=${sessionKey} outcome=ok latencyMs=${Date.now() - acpDispatchStartedAt} queueDepth=${acpStats.turns.queueDepth} activeRuntimes=${acpStats.runtimeCache.activeSessions}`,
     );
-    if (allDispatchedText.trim()) {
-      storeAcpSessionOutput(sessionKey, allDispatchedText);
-    }
     params.recordProcessed("completed", { reason: "acp_dispatch" });
     params.markIdle("message_completed");
     return { queuedFinal, counts };

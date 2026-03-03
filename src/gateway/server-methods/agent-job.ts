@@ -10,6 +10,7 @@ const AGENT_RUN_ERROR_RETRY_GRACE_MS = 15_000;
 
 const agentRunCache = new Map<string, AgentRunSnapshot>();
 const agentRunStarts = new Map<string, number>();
+const agentRunOutputText = new Map<string, string>();
 const pendingAgentRunErrors = new Map<string, PendingAgentRunError>();
 let agentRunListenerStarted = false;
 
@@ -19,6 +20,7 @@ type AgentRunSnapshot = {
   startedAt?: number;
   endedAt?: number;
   error?: string;
+  outputText?: string;
   ts: number;
 };
 
@@ -32,6 +34,7 @@ function pruneAgentRunCache(now = Date.now()) {
   for (const [runId, entry] of agentRunCache) {
     if (now - entry.ts > AGENT_RUN_CACHE_TTL_MS) {
       agentRunCache.delete(runId);
+      agentRunOutputText.delete(runId);
     }
   }
 }
@@ -86,12 +89,14 @@ function createSnapshotFromLifecycleEvent(params: {
     typeof data?.startedAt === "number" ? data.startedAt : agentRunStarts.get(runId);
   const endedAt = typeof data?.endedAt === "number" ? data.endedAt : undefined;
   const error = typeof data?.error === "string" ? data.error : undefined;
+  const outputText = agentRunOutputText.get(runId);
   return {
     runId,
     status: phase === "error" ? "error" : data?.aborted ? "timeout" : "ok",
     startedAt,
     endedAt,
     error,
+    outputText,
     ts: Date.now(),
   };
 }
@@ -105,6 +110,11 @@ function ensureAgentRunListener() {
     if (!evt) {
       return;
     }
+    // Capture accumulated output text from assistant stream events
+    if (evt.stream === "assistant" && typeof evt.data?.text === "string") {
+      agentRunOutputText.set(evt.runId, evt.data.text);
+      return;
+    }
     if (evt.stream !== "lifecycle") {
       return;
     }
@@ -116,6 +126,7 @@ function ensureAgentRunListener() {
       // A new start means this run is active again (or retried). Drop stale
       // terminal snapshots so waiters don't resolve from old state.
       agentRunCache.delete(evt.runId);
+      agentRunOutputText.delete(evt.runId);
       return;
     }
     if (phase !== "end" && phase !== "error") {
