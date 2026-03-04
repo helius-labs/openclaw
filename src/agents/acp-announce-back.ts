@@ -1,12 +1,23 @@
+import { resolveQueueSettings } from "../auto-reply/reply/queue.js";
+import { loadConfig } from "../config/config.js";
 import { callGateway } from "../gateway/call.js";
+import { diagnosticLogger as diag } from "../logging/diagnostic.js";
+import { normalizeAccountId } from "../routing/session-key.js";
 import { normalizeDeliveryContext, type DeliveryContext } from "../utils/delivery-context.js";
-import { INTERNAL_MESSAGE_CHANNEL, isDeliverableMessageChannel } from "../utils/message-channel.js";
-import { buildAnnounceIdempotencyKey } from "./announce-idempotency.js";
+import { isDeliverableMessageChannel } from "../utils/message-channel.js";
+import { buildAnnounceIdempotencyKey, resolveQueueAnnounceId } from "./announce-idempotency.js";
 import { AGENT_LANE_NESTED } from "./lanes.js";
+import {
+  type AnnounceQueueItem,
+  enqueueAnnounce,
+  type AnnounceQueueSettings,
+} from "./subagent-announce-queue.js";
+import { getSubagentDepthFromSessionStore } from "./subagent-depth.js";
 
 const ACP_RUN_ANNOUNCE_BACK_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
 const ACP_RUN_ANNOUNCE_BACK_WAIT_SLICE_MS = 20_000;
 const ACP_RUN_ANNOUNCE_BACK_MAX_MESSAGE_CHARS = 24_000;
+const ACP_RUN_ANNOUNCE_BACK_DELIVERY_TIMEOUT_MS = 60_000;
 
 type AcpAnnounceOutcome =
   | { status: "ok"; outputText?: string }
@@ -97,6 +108,81 @@ interface AcpRunAnnounceRegistration {
   label?: string;
 }
 
+function buildAnnounceQueueKey(sessionKey: string, origin?: DeliveryContext): string {
+  const accountId = normalizeAccountId(origin?.accountId);
+  if (!accountId) {
+    return sessionKey;
+  }
+  return `${sessionKey}:acct:${accountId}`;
+}
+
+function resolveAcpAnnounceSourceSessionKey(announceId?: string): string | undefined {
+  const raw = announceId?.trim() ?? "";
+  if (!raw.startsWith("acp-announce:")) {
+    return undefined;
+  }
+  const rest = raw.slice("acp-announce:".length);
+  const splitIdx = rest.lastIndexOf(":");
+  if (splitIdx <= 0) {
+    return undefined;
+  }
+  return rest.slice(0, splitIdx);
+}
+
+function resolveAcpAnnounceQueueSettings(origin?: DeliveryContext): AnnounceQueueSettings {
+  const cfg = loadConfig();
+  return resolveQueueSettings({
+    cfg,
+    channel: origin?.channel,
+    sessionEntry: undefined,
+  });
+}
+
+async function sendAcpAnnounceQueueItem(item: AnnounceQueueItem): Promise<void> {
+  const origin = normalizeDeliveryContext(item.origin);
+  const channelRaw = typeof origin?.channel === "string" ? origin.channel.trim() : "";
+  const channel = channelRaw && isDeliverableMessageChannel(channelRaw) ? channelRaw : undefined;
+  const requesterDepth = getSubagentDepthFromSessionStore(item.sessionKey);
+  const requesterIsSubagent = requesterDepth >= 1;
+  const shouldDeliverExternally = !requesterIsSubagent && Boolean(channel);
+  const threadId =
+    shouldDeliverExternally && origin?.threadId != null && origin.threadId !== ""
+      ? String(origin.threadId)
+      : undefined;
+
+  const idempotencyKey = buildAnnounceIdempotencyKey(
+    resolveQueueAnnounceId({
+      announceId: item.announceId,
+      sessionKey: item.sessionKey,
+      enqueuedAt: item.enqueuedAt,
+    }),
+  );
+  const sourceSessionKey = resolveAcpAnnounceSourceSessionKey(item.announceId);
+
+  await callGateway({
+    method: "agent",
+    params: {
+      sessionKey: item.sessionKey,
+      message: item.prompt,
+      channel: shouldDeliverExternally ? channel : undefined,
+      accountId: shouldDeliverExternally ? origin?.accountId : undefined,
+      to: shouldDeliverExternally ? origin?.to : undefined,
+      threadId: shouldDeliverExternally ? threadId : undefined,
+      deliver: shouldDeliverExternally,
+      lane: AGENT_LANE_NESTED,
+      idempotencyKey,
+      inputProvenance: sourceSessionKey
+        ? {
+            kind: "inter_session",
+            sourceSessionKey,
+            sourceTool: "acp_announce_back",
+          }
+        : undefined,
+    },
+    timeoutMs: ACP_RUN_ANNOUNCE_BACK_DELIVERY_TIMEOUT_MS,
+  });
+}
+
 export function registerAcpRunAnnounceBack(params: AcpRunAnnounceRegistration): void {
   const key = params.childSessionKey;
   if (ACTIVE_RUN_ANNOUNCE_BACK.has(key)) {
@@ -105,7 +191,11 @@ export function registerAcpRunAnnounceBack(params: AcpRunAnnounceRegistration): 
   ACTIVE_RUN_ANNOUNCE_BACK.add(key);
 
   runAnnounceBack(params)
-    .catch(() => {})
+    .catch((err) => {
+      diag.error(
+        `acp announce-back failed: childSessionKey=${params.childSessionKey} runId=${params.runId} requesterSessionKey=${params.requesterSessionKey} error=${String(err)}`,
+      );
+    })
     .finally(() => {
       ACTIVE_RUN_ANNOUNCE_BACK.delete(key);
     });
@@ -135,33 +225,19 @@ async function runAnnounceBack(params: AcpRunAnnounceRegistration): Promise<void
   });
 
   const origin = normalizeDeliveryContext(params.requesterOrigin);
-  const deliver = !!(origin?.channel && isDeliverableMessageChannel(origin.channel));
-  const idempotencyKey = buildAnnounceIdempotencyKey(
-    `acp-announce:${params.childSessionKey}:${params.runId}`,
-  );
+  const announceId = `acp-announce:${params.childSessionKey}:${params.runId}`;
+  const item: AnnounceQueueItem = {
+    announceId,
+    prompt: message,
+    enqueuedAt: Date.now(),
+    sessionKey: params.requesterSessionKey,
+    origin,
+  };
 
-  try {
-    await callGateway({
-      method: "agent",
-      params: {
-        sessionKey: params.requesterSessionKey,
-        message,
-        channel: deliver ? origin?.channel : INTERNAL_MESSAGE_CHANNEL,
-        accountId: deliver ? origin?.accountId : undefined,
-        to: deliver ? origin?.to : undefined,
-        threadId: deliver ? origin?.threadId : undefined,
-        deliver,
-        lane: AGENT_LANE_NESTED,
-        idempotencyKey,
-        inputProvenance: {
-          kind: "inter_session",
-          sourceSessionKey: params.childSessionKey,
-          sourceTool: "acp_announce_back",
-        },
-      },
-      timeoutMs: 30_000,
-    });
-  } catch {
-    // Best-effort
-  }
+  enqueueAnnounce({
+    key: buildAnnounceQueueKey(params.requesterSessionKey, origin),
+    item,
+    settings: resolveAcpAnnounceQueueSettings(origin),
+    send: sendAcpAnnounceQueueItem,
+  });
 }
