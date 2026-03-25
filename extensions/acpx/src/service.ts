@@ -7,16 +7,8 @@ import type {
 import { registerAcpRuntimeBackend, unregisterAcpRuntimeBackend } from "../runtime-api.js";
 import { resolveAcpxPluginConfig, type ResolvedAcpxPluginConfig } from "./config.js";
 import { ensureAcpx } from "./ensure.js";
-} from "openclaw/plugin-sdk";
-import { registerAcpRuntimeBackend, unregisterAcpRuntimeBackend } from "openclaw/plugin-sdk";
-import {
-  ACPX_PINNED_VERSION,
-  resolveAcpxPluginConfig,
-  type ResolvedAcpxPluginConfig,
-} from "./config.js";
-import { ensurePinnedAcpx } from "./ensure.js";
-import { SessionReaper, type SessionReaperOptions } from "./reaper.js";
 import { ACPX_BACKEND_ID, AcpxRuntime } from "./runtime.js";
+import { SessionReaper, type SessionReaperOptions } from "./reaper.js";
 
 type AcpxRuntimeLike = AcpRuntime & {
   probeAvailability(): Promise<void>;

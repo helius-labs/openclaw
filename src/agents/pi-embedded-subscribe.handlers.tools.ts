@@ -402,7 +402,6 @@ export async function handleToolExecutionStart(
       const sendTarget = extractMessagingToolSend(
         toolName,
         argsRecord,
-        ctx.messagingFallbackContext,
       );
       if (sendTarget) {
         ctx.state.pendingMessagingTargets.set(toolCallId, sendTarget);

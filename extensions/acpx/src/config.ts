@@ -261,6 +261,7 @@ function parseAcpxPluginConfig(value: unknown): ParseResult {
         };
       }
     }
+  }
   const reaperTtlSeconds = value.reaperTtlSeconds;
   if (
     reaperTtlSeconds !== undefined &&
