@@ -197,11 +197,12 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       }
     : undefined;
 
+  const sessionCfg = cfg.session;
+  const storePath = resolveStorePath(sessionCfg?.store, {
+    agentId: route.agentId,
+  });
+
   if (prepared.isDirectMessage) {
-    const sessionCfg = cfg.session;
-    const storePath = resolveStorePath(sessionCfg?.store, {
-      agentId: route.agentId,
-    });
     const pinnedMainDmOwner = resolvePinnedMainDmOwnerFromAllowlist({
       dmScope: cfg.session?.dmScope,
       allowFrom: ctx.allowFrom,
@@ -229,6 +230,18 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
         ctx: prepared.ctxPayload,
       });
     }
+  } else {
+    await updateLastRoute({
+      storePath,
+      sessionKey: route.mainSessionKey,
+      deliveryContext: {
+        channel: "slack",
+        to: `channel:${message.channel}`,
+        accountId: route.accountId,
+        threadId: prepared.ctxPayload.MessageThreadId,
+      },
+      ctx: prepared.ctxPayload,
+    });
   }
 
   const { statusThreadTs, isThreadReply } = resolveSlackThreadTargets({

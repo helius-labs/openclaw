@@ -7,6 +7,7 @@ const SAME_TEXT = "same reply";
 const createSlackDraftStreamMock = vi.fn();
 const deliverRepliesMock = vi.fn(async () => {});
 const finalizeSlackPreviewEditMock = vi.fn(async () => {});
+const updateLastRouteMock = vi.fn(async () => {});
 let mockedDispatchSequence: Array<{
   kind: "tool" | "block" | "final";
   payload: { text: string };
@@ -207,7 +208,7 @@ vi.mock("../allow-list.js", () => ({
 
 vi.mock("../config.runtime.js", () => ({
   resolveStorePath: () => "/tmp/openclaw-store.json",
-  updateLastRoute: async () => {},
+  updateLastRoute: updateLastRouteMock,
 }));
 
 vi.mock("../replies.js", () => ({
@@ -265,6 +266,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     createSlackDraftStreamMock.mockReset();
     deliverRepliesMock.mockReset();
     finalizeSlackPreviewEditMock.mockReset();
+    updateLastRouteMock.mockReset();
     mockedDispatchSequence = [{ kind: "final", payload: { text: FINAL_REPLY_TEXT } }];
 
     createSlackDraftStreamMock.mockReturnValue(createDraftStreamStub());
@@ -280,6 +282,43 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       expect.objectContaining({
         replyThreadTs: THREAD_TS,
         replies: [expect.objectContaining({ text: FINAL_REPLY_TEXT })],
+      }),
+    );
+  });
+
+  it("stores channel delivery targets for non-DM messages", async () => {
+    await dispatchPreparedSlackMessage(createPreparedSlackMessage());
+
+    expect(updateLastRouteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "main",
+        deliveryContext: expect.objectContaining({
+          channel: "slack",
+          to: "channel:C123",
+          accountId: "default",
+          threadId: THREAD_TS,
+        }),
+      }),
+    );
+  });
+
+  it("keeps DM delivery targets user-scoped", async () => {
+    const prepared = createPreparedSlackMessage();
+    prepared.isDirectMessage = true;
+    prepared.message.channel = "D123";
+    prepared.replyTarget = "channel:D123";
+
+    await dispatchPreparedSlackMessage(prepared);
+
+    expect(updateLastRouteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "main",
+        deliveryContext: expect.objectContaining({
+          channel: "slack",
+          to: "user:U123",
+          accountId: "default",
+          threadId: THREAD_TS,
+        }),
       }),
     );
   });
