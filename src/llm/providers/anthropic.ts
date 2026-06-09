@@ -726,6 +726,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 function supportsAdaptiveThinking(modelId: string): boolean {
   // Adaptive-thinking model IDs (with or without date suffix)
   return (
+    modelId.includes("fable") ||
     modelId.includes("opus-4-6") ||
     modelId.includes("opus-4.6") ||
     modelId.includes("opus-4-8") ||
@@ -1015,7 +1016,10 @@ function buildParams(
         };
       }
     } else if (options?.thinkingEnabled === false) {
-      params.thinking = { type: "disabled" };
+      // Fable models reject an explicit "disabled" thinking type; omit the param instead.
+      if (!model.id.includes("fable")) {
+        params.thinking = { type: "disabled" };
+      }
     }
   }
 

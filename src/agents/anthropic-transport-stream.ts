@@ -115,6 +115,7 @@ const EMPTY_ANTHROPIC_MESSAGES_FALLBACK_TEXT = ".";
 
 function isClaudeOpus47OrNewerModel(modelId: string): boolean {
   return (
+    modelId.includes("fable") ||
     modelId.includes("opus-4-8") ||
     modelId.includes("opus-4.8") ||
     modelId.includes("opus-4-7") ||
@@ -877,7 +878,10 @@ function buildAnthropicParams(
         };
       }
     } else if (options?.thinkingEnabled === false) {
-      params.thinking = { type: "disabled" };
+      // Fable models reject an explicit "disabled" thinking type; omit the param instead.
+      if (!model.id.includes("fable")) {
+        params.thinking = { type: "disabled" };
+      }
     }
   }
   if (options?.metadata && typeof options.metadata.user_id === "string") {
